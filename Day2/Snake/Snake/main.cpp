@@ -5,6 +5,9 @@
 #include <vector>
 #include <queue>
 #include <windows.h>
+#include <conio.h>
+#include <ctime>
+#include <cassert>
 using namespace std;
 
 struct ivec2
@@ -32,9 +35,42 @@ struct ivec2
 	static ivec2 Down() { return ivec2(0, 1); }
 };
 
+enum InputKey
+{
+	Left = 75,
+	Right = 77,
+	Up = 72,
+	Down = 80
+};
+
+class InputManager
+{
+	int mCurrentKey = 0;
+public:
+	void CollectInputKey()
+	{
+		if (_kbhit())
+		{
+			mCurrentKey = _getch();
+			if (mCurrentKey == 224)
+				mCurrentKey = _getch();
+		}
+	}
+
+	int GetCurrentKey() const { return mCurrentKey; }
+
+	static InputManager& Instance()
+	{
+		static InputManager inputManager;
+		return inputManager;
+	}
+};
+
 enum PixelColor
 {
-	White = 0
+	White = 0,
+	Red = 4,
+	Yellow = 14
 };
 
 enum PixelType
@@ -42,6 +78,7 @@ enum PixelType
 	None = 0,
 	Square,
 	Circle,
+	Star
 };
 
 struct ScreenAttribute
@@ -66,7 +103,7 @@ struct RenderObject
 class BlockDisplayDevice
 {
 	std::vector<std::vector<ScreenAttribute>> mBlockBuffer;
-	std::vector<std::string> mPixelMap = { "  ","■", "●" };
+	std::vector<std::string> mPixelMap = { "  ","■", "●", "★"};
 	std::vector<RenderElement> mRenderQueue;
 public:
 
@@ -105,11 +142,23 @@ public:
 			}
 		}
 
+		HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+		
 		for (int i = 0; i < mBlockBuffer.size(); i++)
 		{
 			for (int j = 0; j < mBlockBuffer[i].size(); j++)
 			{
-				std::cout << mPixelMap[mBlockBuffer[i][j].mPixel];
+				int color = mBlockBuffer[j][i].mColor;
+				if (color == PixelColor::White)
+				{
+					std::cout << mPixelMap[mBlockBuffer[j][i].mPixel];
+				}
+				else
+				{ 
+					SetConsoleTextAttribute(handle, FOREGROUND_INTENSITY | color);
+					std::cout << mPixelMap[mBlockBuffer[j][i].mPixel];
+					SetConsoleTextAttribute(handle, FOREGROUND_INTENSITY | 7);
+				}
 			}
 
 			std::cout << std::endl;
@@ -164,13 +213,13 @@ public:
 
 	void Start()
 	{
-		mRenderObject.mPixel = PixelType::Square;
+		mRenderObject.mPixel = PixelType::Star;
+		mRenderObject.mColor = PixelColor::Red;
 	}
 
 	void Update()
 	{
 		mRenderObject.mPositions.clear();
-		//重新生成一个位置
 		mRenderObject.mPositions.push_back(mPosition);
 	}
 };
@@ -179,6 +228,7 @@ class Snake : public GameObject
 {
 	std::queue<ivec2> mPositions;
 	bool mNeedGrow = false;
+	ivec2 mDirection = ivec2::Right();
 public:
 	
 	void Grow()
@@ -194,10 +244,27 @@ public:
 			result = true;
 		return result;
 	}
+	bool Collide(const std::vector<ivec2>& otherPos)
+	{
+		for (int i = 0; i < otherPos.size(); i++)
+		{
+			auto head = mPositions.back();
+			if (otherPos[i] == head)
+				return true;
+		}
+
+		return false;
+	}
+
+	void SetDirection(const ivec2& dir)
+	{
+		mDirection = dir;
+	}
 
 	void Start()
 	{
 		mRenderObject.mPixel = PixelType::Circle;
+		mRenderObject.mColor = PixelColor::Yellow;
 		mPositions.push(ivec2(2, 2));
 		mPositions.push(ivec2(2, 3));
 		mPositions.push(ivec2(2, 4));
@@ -207,7 +274,7 @@ public:
 	{
 		// Update logic
 		auto head = mPositions.back();
-		head += ivec2::Right();
+		head += mDirection;
 		if (!mNeedGrow)
 			mPositions.pop();
 		mPositions.push(head);
@@ -231,6 +298,9 @@ class Game
 	GameObject mWall;
 	Food mFood;
 	Snake mSnake;
+
+	time_t mCurrentTime = 0, mLastTime = 0;
+
 public:
 	Game() {}
 
@@ -249,38 +319,78 @@ public:
 		mSnake.Start();
 		mFood.Start();
 		mFood.SetPosition(ivec2(10, 4));
+
+		mCurrentTime = clock();
+		mLastTime = mCurrentTime;
 	}
 
 	void UpdateFrame()
 	{
-		BlockDisplayDevice::Instance().AppenndRenderQueue(mWall.GetRenderObject());
-		BlockDisplayDevice::Instance().AppenndRenderQueue(mSnake.GetRenderObject());
-		BlockDisplayDevice::Instance().AppenndRenderQueue(mFood.GetRenderObject());
-		BlockDisplayDevice::Instance().Display();
-
-		// TODO:Get input
-
-		if (mSnake.Collide(mFood.GetPosition()))
-		{	
-			mSnake.Grow();
+		mCurrentTime = clock();
+		// Get input
+		InputManager::Instance().CollectInputKey();
+		{
+			switch (InputManager::Instance().GetCurrentKey())
+			{
+				case InputKey::Left:
+					mSnake.SetDirection(ivec2::Left());
+					break;
+				case InputKey::Right:
+					mSnake.SetDirection(ivec2::Right());
+					break;
+				case InputKey::Up:
+					mSnake.SetDirection(ivec2::Up());
+					break;
+				case InputKey::Down:
+					mSnake.SetDirection(ivec2::Down());
+					break;
+			}
 		}
 
-		mSnake.Update();
-		mFood.Update();
+		if (mCurrentTime - mLastTime > 100)
+		{
+			system("cls");
 
-		BlockDisplayDevice::Instance().Clear();
+			// Render update
+			BlockDisplayDevice::Instance().AppenndRenderQueue(mWall.GetRenderObject());
+			BlockDisplayDevice::Instance().AppenndRenderQueue(mSnake.GetRenderObject());
+			BlockDisplayDevice::Instance().AppenndRenderQueue(mFood.GetRenderObject());
+			BlockDisplayDevice::Instance().Display();
+
+			// Game logic update
+			if (mSnake.Collide(mFood.GetPosition()))
+			{	
+				mSnake.Grow();
+
+				int x = (rand() % 28) + 1;
+				int y = (rand() % 28) + 1;
+				mFood.SetPosition(ivec2(x, y));
+			}
+
+			if (mSnake.Collide(mWall.GetRenderObject().mPositions))
+			{
+				assert(0);
+			}
+
+			mSnake.Update();
+			mFood.Update();
+
+			BlockDisplayDevice::Instance().Clear();
+			mLastTime = mCurrentTime;
+		}
 	}
 };
 
 int main()
 {
+	srand((int)time(0));
 	Game game;
 	game.Initialize();
+
 	while(true)
-	{ 
-		system("cls");
+	{
 		game.UpdateFrame();
-		_sleep(500);
+		_sleep(1);
 	}
 	return 0;
 }
